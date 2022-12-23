@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # AirBnB clone web server setup and configuration
 
 # SCRIPT INCOMPLETE. NEEDS SOME MORE THINKING---
