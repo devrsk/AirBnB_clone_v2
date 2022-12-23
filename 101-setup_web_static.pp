@@ -1,62 +1,123 @@
-# Script that configures Nginx server with some folders and files
-
-exec {'update':
-  provider => shell,
-  command  => 'sudo apt-get -y update',
-  before   => Exec['install Nginx'],
+#!/usr/bin/puppet apply
+# AirBnB clone web server setup and configuration
+exec { 'apt-get-update':
+  command => '/usr/bin/apt-get update',
+  path    => '/usr/bin:/usr/sbin:/bin',
 }
 
-exec {'install Nginx':
-  provider => shell,
-  command  => 'sudo apt-get -y install nginx',
-  before   => Exec['start Nginx'],
+exec { 'remove-current':
+  command => 'rm -rf /data/web_static/current',
+  path    => '/usr/bin:/usr/sbin:/bin',
 }
 
-exec {'start Nginx':
-  provider => shell,
-  command  => 'sudo service nginx start',
-  before   => Exec['create first directory'],
+package { 'nginx':
+  ensure  => installed,
+  require => Exec['apt-get-update'],
 }
 
-exec {'create first directory':
-  provider => shell,
-  command  => 'sudo mkdir -p /data/web_static/releases/test/',
-  before   => Exec['create second directory'],
-}
-
-exec {'create second directory':
-  provider => shell,
-  command  => 'sudo mkdir -p /data/web_static/shared/',
-  before   => Exec['content into html'],
-}
-
-exec {'content into html':
-  provider => shell,
-  command  => 'echo "Holberton School" | sudo tee /data/web_static/releases/test/index.html',
-  before   => Exec['symbolic link'],
-}
-
-exec {'symbolic link':
-  provider => shell,
-  command  => 'sudo ln -sf /data/web_static/releases/test/ /data/web_static/current',
-  before   => Exec['put location'],
-}
-
-exec {'put location':
-  provider => shell,
-  command  => 'sudo sed -i \'38i\\tlocation /hbnb_static/ {\n\t\talias /data/web_static/current/;\n\t\tautoindex off;\n\t}\n\' /etc/nginx/sites-available/default',
-  before   => Exec['restart Nginx'],
-}
-
-exec {'restart Nginx':
-  provider => shell,
-  command  => 'sudo service nginx restart',
-  before   => File['/data/']
-}
-
-file {'/data/':
+file { '/var/www':
   ensure  => directory,
-  owner   => 'ubuntu',
-  group   => 'ubuntu',
+  mode    => '0755',
   recurse => true,
+  require => Package['nginx'],
 }
+
+file { '/var/www/html/index.html':
+  content => 'Hello, World!',
+  require => File['/var/www'],
+}
+
+file { '/var/www/error/404.html':
+  content => "Ceci n'est pas une page",
+  require => File['/var/www'],
+}
+
+exec { 'make-static-files-folder':
+  command => 'mkdir -p /data/web_static/releases/test /data/web_static/shared',
+  path    => '/usr/bin:/usr/sbin:/bin',
+  require => Package['nginx'],
+}
+
+file { '/data/web_static/releases/test/index.html':
+  content =>
+"<!DOCTYPE html>
+<html lang='en-US'>
+	<head>
+		<title>Home - AirBnB Clone</title>
+	</head>
+	<body>
+		<h1>Welcome to AirBnB!</h1>
+	<body>
+</html>
+",
+  replace => true,
+  require => Exec['make-static-files-folder'],
+}
+
+exec { 'link-static-files':
+  command => 'ln -sf /data/web_static/releases/test/ /data/web_static/current',
+  path    => '/usr/bin:/usr/sbin:/bin',
+  require => [
+    Exec['remove-current'],
+    File['/data/web_static/releases/test/index.html'],
+  ],
+}
+
+exec { 'change-data-owner':
+  command => 'chown -hR ubuntu:ubuntu /data',
+  path    => '/usr/bin:/usr/sbin:/bin',
+  require => Exec['link-static-files'],
+}
+
+file { '/etc/nginx/sites-available/default':
+  ensure  => present,
+  mode    => '0644',
+  content =>
+"server {
+	listen 80 default_server;
+	listen [::]:80 default_server;
+	server_name _;
+	index index.html index.htm;
+	error_page 404 /404.html;
+	add_header X-Served-By \$hostname;
+	location / {
+		root /var/www/html/;
+		try_files \$uri \$uri/ =404;
+	}
+	location /hbnb_static/ {
+		alias /data/web_static/current/;
+		try_files \$uri \$uri/ =404;
+	}
+	if (\$request_filename ~ redirect_me){
+		rewrite ^ https://sketchfab.com/bluepeno/models permanent;
+	}
+	location = /404.html {
+		root /var/www/error/;
+		internal;
+	}
+}",
+  require => [
+    Package['nginx'],
+    File['/var/www/html/index.html'],
+    File['/var/www/error/404.html'],
+    Exec['change-data-owner']
+  ],
+}
+
+exec { 'enable-site':
+  command => "ln -sf '/etc/nginx/sites-available/default' '/etc/nginx/sites-enabled/default'",
+  path    => '/usr/bin:/usr/sbin:/bin',
+  require => File['/etc/nginx/sites-available/default'],
+}
+
+exec { 'start-nginx':
+  command => 'sudo service nginx restart',
+  path    => '/usr/bin:/usr/sbin:/bin',
+  require => [
+    Exec['enable-site'],
+    Package['nginx'],
+    File['/data/web_static/releases/test/index.html'],
+  ],
+}
+
+Exec['start-nginx']
